@@ -1,0 +1,308 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 340px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f5f5f5;
+}
+
+.container {
+  padding: 14px;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.header h2 {
+  font-size: 15px;
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+.header .subtitle {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+}
+
+/* Folder status */
+.folder-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.folder-icon {
+  font-size: 14px;
+}
+
+#folder-name {
+  flex: 1;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#folder-name.set {
+  color: #07c160;
+  font-weight: 500;
+}
+
+#change-folder-link {
+  font-size: 11px;
+  color: #1890ff;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+#change-folder-link:hover {
+  text-decoration: underline;
+}
+
+/* URL input */
+.url-input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+#url-input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+#url-input:focus {
+  border-color: #07c160;
+}
+
+#url-input::placeholder {
+  color: #bbb;
+}
+
+.btn-url-save {
+  padding: 7px 14px;
+  background: #07c160;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.btn-url-save:hover:not(:disabled) {
+  background: #06ad56;
+}
+
+.btn-url-save:disabled {
+  background: #a0d9b8;
+  cursor: not-allowed;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: #bbb;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e0e0e0;
+}
+
+/* Status */
+.status {
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border: 1px solid #e8e8e8;
+}
+
+.status-text {
+  font-size: 12px;
+  color: #555;
+  line-height: 1.4;
+}
+
+.status-text.idle { color: #888; }
+.status-text.working { color: #1890ff; }
+.status-text.success { color: #52c41a; }
+.status-text.error { color: #ff4d4f; }
+
+.spinner {
+  display: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #e0e0e0;
+  border-top: 2px solid #1890ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+
+.spinner.active { display: inline-block; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Buttons */
+.btn-group {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.btn-save {
+  flex: 1;
+  padding: 9px 12px;
+  background: #07c160;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-save:hover:not(:disabled) { background: #06ad56; }
+.btn-save:disabled { background: #a0d9b8; cursor: not-allowed; }
+
+.btn-copy {
+  flex: 1;
+  padding: 9px 12px;
+  background: #1890ff;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-copy:hover:not(:disabled) { background: #167cdb; }
+.btn-copy:disabled { background: #93c5fd; cursor: not-allowed; }
+
+.btn-pdf {
+  width: 100%;
+  padding: 8px 12px;
+  background: #fff;
+  color: #ff6b35;
+  border: 1.5px solid #ff6b35;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 8px;
+}
+
+.btn-pdf:hover:not(:disabled) {
+  background: #fff5f0;
+  border-color: #e55a2b;
+  color: #e55a2b;
+}
+
+.btn-pdf:disabled {
+  border-color: #ccc;
+  color: #ccc;
+  cursor: not-allowed;
+}
+
+.shortcuts-hint {
+  text-align: center;
+  font-size: 10px;
+  color: #aaa;
+  margin-bottom: 6px;
+}
+
+.shortcuts-hint kbd {
+  background: #f0f0f0;
+  border: 1px solid #d0d0d0;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-family: monospace;
+  margin: 0 2px;
+}
+
+.shortcuts-hint span {
+  margin-right: 2px;
+}
+
+.result {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  display: none;
+  word-break: break-all;
+}
+
+.result.visible { display: block; }
+.result.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+.result.error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+
+.result-icon {
+  font-size: 12px;
+  margin-right: 3px;
+}
+
+.footer {
+  text-align: center;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e8e8e8;
+}
+
+.footer a {
+  font-size: 11px;
+  color: #888;
+  text-decoration: none;
+}
+
+.footer a:hover {
+  color: #07c160;
+}

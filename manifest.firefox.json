@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_appName__",
+  "version": "2.1.0",
+  "description": "__MSG_appDescription__",
+  "default_locale": "en",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "wechat-markdown-saver@firefox",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": ["activeTab", "downloads", "storage", "unlimitedStorage", "debugger"],
+  "host_permissions": ["*://mp.weixin.qq.com/*", "*://mmbiz.qpic.cn/*", "*://mmbiz.qlogo.cn/*"],
+  "commands": {
+    "save-to-folder": {
+      "suggested_key": { "default": "Ctrl+Shift+S" },
+      "description": "__MSG_popupSaveBtn__"
+    },
+    "copy-to-clipboard": {
+      "suggested_key": { "default": "Ctrl+Shift+C" },
+      "description": "__MSG_popupCopyBtn__"
+    },
+    "save-as-pdf": {
+      "suggested_key": { "default": "Ctrl+Shift+P" },
+      "description": "__MSG_popupPdfBtn__"
+    }
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://mp.weixin.qq.com/*"],
+      "js": [
+        "shared/browser.js",
+        "shared/i18n.js",
+        "lib/turndown.min.js",
+        "content/turndown-config.js",
+        "content/extractor.js",
+        "content/post-processor.js",
+        "content/content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

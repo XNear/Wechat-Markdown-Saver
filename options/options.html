@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title data-i18n="optionsTitle">WeChat Markdown Saver — Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <h1 data-i18n="optionsHeading">WeChat Markdown Saver</h1>
+    <p class="subtitle" data-i18n="optionsSubtitle">Save WeChat articles as Markdown with one shortcut</p>
+
+    <section class="card">
+      <h2 data-i18n="optionsLanguageSection">Language / 语言</h2>
+      <label class="radio-row">
+        <input type="radio" name="uiLanguage" value="en">
+        <span data-i18n="optionsLanguageEn">English</span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="uiLanguage" value="zh_CN">
+        <span data-i18n="optionsLanguageZhCN">中文 (Chinese)</span>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2 data-i18n="optionsFolderSection">Save Folder</h2>
+      <p data-i18n="optionsFolderDesc">Pick a folder on your computer. Articles will be saved here directly — no prompts, no zip extraction.</p>
+      <div class="folder-row">
+        <span id="folder-path" class="folder-path" data-i18n="optionsFolderNotSelected">Not selected</span>
+        <button id="pick-folder-btn" data-i18n="optionsChooseFolderBtn">Choose Folder</button>
+        <button id="clear-folder-btn" class="btn-secondary" data-i18n="optionsClearBtn">Clear</button>
+      </div>
+      <p class="hint" id="folder-hint" data-i18n="optionsFolderHint">Tip: pick a folder inside Dropbox / OneDrive / iCloud to sync articles across devices.</p>
+    </section>
+
+    <section class="card">
+      <h2 data-i18n="optionsOutputSection">Output Structure</h2>
+      <label class="radio-row">
+        <input type="radio" name="outputStructure" value="simple" checked>
+        <span data-i18n="optionsOutputSimple">Simple — images/ folder alongside article.md</span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="outputStructure" value="obsidian">
+        <span data-i18n="optionsOutputObsidian">Obsidian — assets/title/ nested structure</span>
+      </label>
+      <p class="hint" data-i18n="optionsOutputHint">Choose Obsidian mode if you use Obsidian for fewer broken image links.</p>
+    </section>
+
+    <section class="card">
+      <h2 data-i18n="optionsShortcutsSection">Keyboard Shortcuts</h2>
+      <div class="shortcut-row">
+        <div class="shortcut-label">
+          <kbd>Ctrl+Shift+S</kbd>
+          <span class="label-desc" data-i18n="popupSaveBtn">Save to Folder</span>
+        </div>
+        <p class="shortcut-detail" data-i18n="optionsShortcutSaveDesc">Extracts the article, downloads images, and writes everything into your chosen folder.</p>
+      </div>
+      <div class="shortcut-row">
+        <div class="shortcut-label">
+          <kbd>Ctrl+Shift+C</kbd>
+          <span class="label-desc" data-i18n="popupCopyBtn">Copy to Clipboard</span>
+        </div>
+        <p class="shortcut-detail" data-i18n="optionsShortcutCopyDesc">Copies the full article as Markdown (images keep remote URLs).</p>
+      </div>
+      <div class="shortcut-row">
+        <div class="shortcut-label">
+          <kbd>Ctrl+Shift+P</kbd>
+          <span class="label-desc" data-i18n="popupPdfBtn">Save as PDF</span>
+        </div>
+        <p class="shortcut-detail" data-i18n="optionsShortcutPdfDesc">Opens the article in a print-ready page and triggers Save as PDF.</p>
+      </div>
+      <p class="hint"><span data-i18n="optionsShortcutNote">You can change these shortcuts at</span> <code>chrome://extensions/shortcuts</code></p>
+    </section>
+
+    <section class="card">
+      <h2 data-i18n="optionsModeSection">Default Save Mode</h2>
+      <label class="radio-row">
+        <input type="radio" name="saveMode" value="folder" checked>
+        <span data-i18n="optionsModeFolder">Save to local folder (images downloaded)</span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="saveMode" value="clipboard">
+        <span data-i18n="optionsModeClipboard">Copy to clipboard (images keep remote URLs)</span>
+      </label>
+      <label class="radio-row">
+        <input type="radio" name="saveMode" value="both">
+        <span data-i18n="optionsModeBoth">Both — save to folder AND copy to clipboard</span>
+      </label>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+  <script src="../shared/browser.js"></script>
+  <script src="../shared/i18n.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

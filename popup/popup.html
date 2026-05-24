@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2 data-i18n="popupTitle">WeChat Markdown Saver</h2>
+      <div class="subtitle" data-i18n="popupSubtitle">Save articles as Markdown</div>
+    </div>
+
+    <div class="folder-status" id="folder-status">
+      <span class="folder-icon">&#128194;</span>
+      <span id="folder-name">No folder set</span>
+      <a href="#" id="change-folder-link" data-i18n="popupFolderChange">Change</a>
+    </div>
+
+    <div class="url-input-row">
+      <input type="text" id="url-input" data-i18n-placeholder="popupUrlPlaceholder" placeholder="Paste WeChat article URL here...">
+      <button class="btn-url-save" id="url-save-btn" data-i18n="popupUrlSaveBtn">Save</button>
+    </div>
+
+    <div class="divider"><span data-i18n="popupOrDivider">or save current page</span></div>
+
+    <div class="status">
+      <div class="status-row">
+        <span class="spinner" id="spinner"></span>
+        <span class="status-text idle" id="status-text" data-i18n="popupReady">Ready</span>
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn-save" id="save-btn" data-i18n="popupSaveBtn">Save to Folder</button>
+      <button class="btn-copy" id="copy-btn" data-i18n="popupCopyBtn">Copy to Clipboard</button>
+    </div>
+
+    <button class="btn-pdf" id="pdf-btn" data-i18n="popupPdfBtn">Save as PDF</button>
+
+    <div class="shortcuts-hint">
+      <span data-i18n="popupShortcutsHint">Shortcuts:</span>
+      <kbd>Ctrl+Shift+S</kbd> <span data-i18n="popupSaveShortcut">Save</span>
+      <kbd>Ctrl+Shift+C</kbd> <span data-i18n="popupCopyShortcut">Copy</span>
+      <kbd>Ctrl+Shift+P</kbd> PDF
+    </div>
+
+    <div class="result" id="result"></div>
+
+    <div class="footer">
+      <a href="#" id="settings-link" data-i18n="popupSettingsLink">Settings</a>
+    </div>
+  </div>
+  <script src="../shared/browser.js"></script>
+  <script src="../shared/i18n.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
