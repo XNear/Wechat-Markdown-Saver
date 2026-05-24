@@ -23,7 +23,7 @@ Save WeChat official account articles as Markdown with one click. Images are dow
 
 ### Chrome / Edge
 
-1. 下载 [最新 Release](https://github.com/yourusername/wechat-markdown-saver/releases) 中的 `wechat-md-saver-chrome-x.x.x.zip` 或 `wechat-md-saver-edge-x.x.x.zip`
+1. 下载 [最新 Release](https://github.com/XNear/wechat-markdown-saver/releases) 中的 `wechat-md-saver-chrome-x.x.x.zip` 或 `wechat-md-saver-edge-x.x.x.zip`
 2. 解压到任意文件夹
 3. 打开 `chrome://extensions/`（Chrome）或 `edge://extensions/`（Edge）
 4. 开启右上角「开发者模式」
@@ -31,7 +31,7 @@ Save WeChat official account articles as Markdown with one click. Images are dow
 
 ### Firefox
 
-1. 下载 [最新 Release](https://github.com/yourusername/wechat-markdown-saver/releases) 中的 `wechat-md-saver-firefox-x.x.x.zip`
+1. 下载 [最新 Release](https://github.com/XNear/wechat-markdown-saver/releases) 中的 `wechat-md-saver-firefox-x.x.x.zip`
 2. 解压到任意文件夹
 3. 打开 `about:debugging#/runtime/this-firefox`
 4. 点击「临时载入附加组件」
