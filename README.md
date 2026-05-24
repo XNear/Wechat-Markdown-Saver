@@ -4,6 +4,8 @@
 
 Save WeChat official account articles as Markdown with one click. Images are downloaded locally. Works on Chrome, Edge, and Firefox.
 
+目标：让每个人都能把微信文章真正存进自己的知识库
+
 ## 功能 Features
 
 - **一键保存** — 点击按钮或按快捷键，文章 + 图片直接写入本地文件夹，无需弹窗、无需解压
