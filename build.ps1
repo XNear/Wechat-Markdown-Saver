@@ -26,7 +26,7 @@ Write-Host "Building version $Version ..."
 if (Test-Path $Dist) { Remove-Item -Recurse -Force $Dist }
 New-Item -ItemType Directory -Path $Dist | Out-Null
 
-$Sources = @("background", "content", "icons", "lib", "options", "popup", "shared", "_locales")
+$Sources = @("background", "content", "icons", "lib", "options", "popup", "shared", "_locales", "offscreen")
 
 function Update-ManifestVersion($dir, $srcManifest) {
   Copy-Item (Join-Path $Root $srcManifest) (Join-Path $dir "manifest.json")

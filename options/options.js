@@ -23,12 +23,19 @@ function openDB() {
 async function storeDirectoryHandle(handle) {
   await chrome.storage.local.set({ folderName: handle.name, folderSet: true });
   const database = await openDB();
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = database.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).put(handle, 'dirHandle');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+  // Verify the handle was actually stored by reading it back
+  const verify = await loadDirectoryHandle();
+  if (!verify) {
+    throw new Error('Handle verification failed — could not read back from storage');
+  }
+  // Notify offscreen document to reload its handle
+  chrome.runtime.sendMessage({ action: 'RELOAD_HANDLE' }).catch(() => {});
 }
 
 async function loadDirectoryHandle() {
@@ -44,11 +51,13 @@ async function loadDirectoryHandle() {
 async function clearDirectoryHandle() {
   await chrome.storage.local.remove(['folderName', 'folderSet']);
   const database = await openDB();
-  return new Promise((resolve) => {
+  await new Promise((resolve) => {
     const tx = database.transaction(STORE_NAME, 'readwrite');
     tx.objectStore(STORE_NAME).delete('dirHandle');
     tx.oncomplete = () => resolve();
   });
+  // Notify offscreen document
+  chrome.runtime.sendMessage({ action: 'RELOAD_HANDLE' }).catch(() => {});
 }
 
 // --- UI ---

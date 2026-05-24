@@ -34,6 +34,7 @@ SOURCES=(
   popup
   shared
   _locales
+  offscreen
 )
 
 # ── Chrome ──────────────────────────────────────────────────────

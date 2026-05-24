@@ -1,17 +1,25 @@
-// service-worker.js — Orchestrator: keyboard shortcuts, directory writing, image downloads
+// service-worker.js — Orchestrator: routes write operations to offscreen
+// document so that FileSystemDirectoryHandle permissions survive service
+// worker restarts. Downloads and zip fallback remain here.
 
 importScripts('../shared/browser.js');
 importScripts('../shared/i18n.js');
 importScripts('../lib/jszip.min.js');
 
+// ── Offscreen Document Management ──────────────────────────────────────
+
+const OFFSCREEN_URL = 'offscreen/offscreen.html';
 const DB_NAME = 'wechat-md-saver';
 const DB_VERSION = 1;
 const STORE_NAME = 'handles';
 
-// In-memory handle cache — populated on first successful load from IndexedDB.
+let _offscreenReady = false;
+let _creatingOffscreen = null;
+
+// In-memory handle cache for Firefox fallback
 let _dirHandle = null;
 
-// --- IndexedDB ---
+// ── IndexedDB (for Firefox direct-write fallback) ─────────────────────
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -24,9 +32,6 @@ function openDB() {
 
 async function loadDirectoryHandle() {
   if (_dirHandle) return _dirHandle;
-
-  // Read from IndexedDB (same origin as options page — should be shared).
-  // Retry a few times in case the page's transaction hasn't committed yet.
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const db = await openDB();
@@ -40,25 +45,117 @@ async function loadDirectoryHandle() {
         _dirHandle = handle;
         return handle;
       }
-    } catch (e) {
-      // ignore and retry
-    }
-    if (attempt < 2) {
-      await new Promise(r => setTimeout(r, 200));
-    }
+    } catch (e) {}
+    if (attempt < 2) await new Promise(r => setTimeout(r, 200));
   }
   return null;
 }
 
-async function getOutputStructure() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(['outputStructure'], (result) => {
-      resolve(result.outputStructure || 'simple');
-    });
-  });
+async function verifyHandleUsable(dirHandle) {
+  try {
+    const testName = '.wms_test_' + Date.now().toString(36);
+    const testFile = await dirHandle.getFileHandle(testName, { create: true });
+    const writable = await testFile.createWritable();
+    await writable.write(new Uint8Array([1]));
+    await writable.close();
+    await dirHandle.removeEntry(testName);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
-// --- Keyboard Shortcuts ---
+async function attemptWrite(dirHandle, safeDirName, safeTitle, mdContent, succeeded, outputStructure) {
+  try {
+    const articleDir = await dirHandle.getDirectoryHandle(safeDirName, { create: true });
+    let imagesDir;
+    if (outputStructure === 'obsidian') {
+      const assetsDir = await articleDir.getDirectoryHandle('assets', { create: true });
+      imagesDir = await assetsDir.getDirectoryHandle(safeTitle, { create: true });
+    } else {
+      imagesDir = await articleDir.getDirectoryHandle('images', { create: true });
+    }
+    const mdFileName = outputStructure === 'obsidian' ? safeTitle + '.md' : 'article.md';
+    const mdFile = await articleDir.getFileHandle(mdFileName, { create: true });
+    const mdWritable = await mdFile.createWritable();
+    await mdWritable.write(mdContent);
+    await mdWritable.close();
+    for (const r of succeeded) {
+      const imgFile = await imagesDir.getFileHandle(r.filename, { create: true });
+      const imgWritable = await imgFile.createWritable();
+      await imgWritable.write(r.data);
+      await imgWritable.close();
+    }
+    return { success: true, error: null };
+  } catch (e) {
+    return { success: false, error: e };
+  }
+}
+
+async function ensureOffscreenDocument() {
+  // Firefox and other non-Chromium browsers don't support the offscreen API.
+  // In those browsers, the service worker writes files directly (which works
+  // because their background scripts have different lifecycle behavior).
+  if (!chrome.offscreen) return false;
+
+  if (_offscreenReady) return true;
+
+  // Check if already exists
+  const clients = await self.clients.matchAll({ includeUncontrolled: true });
+  const existing = clients.find(c => c.url.includes(OFFSCREEN_URL));
+  if (existing) {
+    _offscreenReady = true;
+    return true;
+  }
+
+  // Prevent concurrent creation
+  if (_creatingOffscreen) return _creatingOffscreen;
+
+  _creatingOffscreen = (async () => {
+    try {
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_URL,
+        reasons: ['BLOBS'],
+        justification: 'Persist FileSystemDirectoryHandle for folder writes'
+      });
+      // Wait for OFFSCREEN_READY message
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Offscreen document creation timed out'));
+        }, 10000);
+        const listener = (msg) => {
+          if (msg.action === 'OFFSCREEN_READY') {
+            clearTimeout(timeout);
+            chrome.runtime.onMessage.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.runtime.onMessage.addListener(listener);
+      });
+      _offscreenReady = true;
+      _creatingOffscreen = null;
+      return true;
+    } catch (e) {
+      _creatingOffscreen = null;
+      console.error('Failed to create offscreen document:', e);
+      return false;
+    }
+  })();
+
+  return _creatingOffscreen;
+}
+
+// Listen for heartbeat and ready messages from offscreen
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action === 'OFFSCREEN_READY') {
+    _offscreenReady = true;
+  }
+  if (msg.action === 'OFFSCREEN_HEARTBEAT') {
+    _offscreenReady = true;
+  }
+});
+
+// ── Keyboard Shortcuts ─────────────────────────────────────────────────
 
 chrome.commands.onCommand.addListener(async (command) => {
   try {
@@ -69,7 +166,7 @@ chrome.commands.onCommand.addListener(async (command) => {
     }
 
     if (command === 'save-to-folder') {
-      await handleSaveToFolder(tab.id);
+      await handleSaveToFolder(tab.id, null);
     } else if (command === 'copy-to-clipboard') {
       await handleCopyToClipboard(tab.id);
     } else if (command === 'save-as-pdf') {
@@ -81,7 +178,7 @@ chrome.commands.onCommand.addListener(async (command) => {
   }
 });
 
-// --- Popup Connection ---
+// ── Popup Connection ───────────────────────────────────────────────────
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'save-article') return;
@@ -89,25 +186,9 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener(async (msg) => {
     if (msg.action === 'SAVE_ARTICLE') {
       try {
-        const specifiedTabId = msg.tabId;
-        let tabId, tabUrl;
-
-        if (specifiedTabId) {
-          const tab = await chrome.tabs.get(specifiedTabId);
-          tabId = tab.id;
-          tabUrl = tab.url;
-        } else {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (!tab || !tab.id) {
-            port.postMessage({ error: 'No active tab found.' });
-            return;
-          }
-          tabId = tab.id;
-          tabUrl = tab.url;
-        }
-
-        if (!tabUrl || !tabUrl.includes('mp.weixin.qq.com/s/')) {
-          port.postMessage({ error: t('swNotArticle') });
+        const tabId = await resolveTabId(msg);
+        if (!tabId) {
+          port.postMessage({ error: 'No active tab found.' });
           return;
         }
         await handleSaveToFolder(tabId, port);
@@ -133,66 +214,33 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-// --- Core: Save to Folder ---
+async function resolveTabId(msg) {
+  if (msg.tabId) {
+    const tab = await chrome.tabs.get(msg.tabId);
+    if (!tab) return null;
+    if (!tab.url || !tab.url.includes('mp.weixin.qq.com/s/')) return null;
+    return tab.id;
+  }
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.id) return null;
+  if (!tab.url || !tab.url.includes('mp.weixin.qq.com/s/')) return null;
+  return tab.id;
+}
+
+// ── Core: Save to Folder ───────────────────────────────────────────────
 
 async function handleSaveToFolder(tabId, popupPort) {
-  let dirHandle = await loadDirectoryHandle();
-
-  // --- Verify the handle is actually usable with a quick test write ---
-  if (dirHandle) {
-    const usable = await verifyHandleUsable(dirHandle);
-    if (!usable) {
-      // Handle is stale — clear cache and try to reload once
-      console.warn('Cached directory handle is stale, attempting reload...');
-      _dirHandle = null;
-      dirHandle = await loadDirectoryHandle();
-      if (dirHandle) {
-        const retryUsable = await verifyHandleUsable(dirHandle);
-        if (!retryUsable) {
-          // Still stale after reload — inform user and fall back
-          console.warn('Directory handle still stale after reload');
-          _dirHandle = null;
-          dirHandle = null;
-        }
-      }
-    }
-  }
-
-  if (!dirHandle) {
-    sendStatus(popupPort, t('swNoFolderSet'));
-    return handleZipFallback(tabId, popupPort);
-  }
-
+  // 1. Extract article from content script
   sendStatus(popupPort, t('swExtracting'));
   const article = await extractArticle(tabId);
   if (!article) return;
 
   const { title, author, publishDate, markdown, images, sourceUrl } = article;
 
-  sendStatus(popupPort, t('swDownloading', [String(images.length)]));
-  const imageResults = await downloadAllImages(images, (done, total) => {
-    sendStatus(popupPort, t('swDownloadingProgress', [String(done), String(total)]));
-  });
-
-  const succeeded = imageResults.filter(r => r.data !== null);
-  const imageLookup = {};
-  succeeded.forEach(r => { imageLookup[r.originalUrl] = r.filename; });
-
+  // 2. Prepare payload for offscreen document
   const outputStructure = await getOutputStructure();
   const safeTitle = sanitizeFilename(title) || 'wechat-article';
-  let imagePrefix;
-  if (outputStructure === 'obsidian') {
-    imagePrefix = 'assets/' + safeTitle + '/';
-  } else {
-    imagePrefix = 'images/';
-  }
-
-  let finalMarkdown = markdown;
-  images.forEach(img => {
-    if (imageLookup[img.url]) {
-      finalMarkdown = finalMarkdown.replaceAll(img.url, imagePrefix + imageLookup[img.url]);
-    }
-  });
+  const safeDirName = safeTitle + '_' + Date.now().toString(36);
 
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
   const frontmatter = [
@@ -205,128 +253,129 @@ async function handleSaveToFolder(tabId, popupPort) {
     '---', '', ''
   ].join('\n');
 
-  const mdContent = frontmatter + finalMarkdown;
+  const mdContent = frontmatter + markdown;
 
-  sendStatus(popupPort, t('swWriting'));
-  const safeDirName = safeTitle + '_' + Date.now().toString(36);
+  const payload = {
+    safeDirName,
+    safeTitle,
+    markdown: mdContent,
+    images,
+    outputStructure
+  };
 
-  // Attempt direct write. On failure, try clearing the handle cache and
-  // reloading once before falling back to zip.
-  const writeResult = await attemptWrite(
-    dirHandle, safeDirName, safeTitle, mdContent, succeeded, outputStructure
-  );
+  // 3. Try writing via offscreen document (Chrome/Edge) or direct write (Firefox)
+  let result = null;
 
-  if (writeResult.success) {
-    sendDone(popupPort, safeDirName, succeeded.length, imageResults.length - succeeded.length);
-    notifyBadge('');
-    return;
-  }
-
-  // Write failed — try recovering the handle once
-  console.warn('First write attempt failed:', writeResult.error);
-  _dirHandle = null;
-  const reloadedHandle = await loadDirectoryHandle();
-  if (reloadedHandle) {
-    const reloadUsable = await verifyHandleUsable(reloadedHandle);
-    if (reloadUsable) {
-      sendStatus(popupPort, t('swWriting'));
-      const retryResult = await attemptWrite(
-        reloadedHandle, safeDirName, safeTitle, mdContent, succeeded, outputStructure
-      );
-      if (retryResult.success) {
-        _dirHandle = reloadedHandle;
-        sendDone(popupPort, safeDirName, succeeded.length, imageResults.length - succeeded.length);
-        notifyBadge('');
-        return;
+  const offscreenReady = await ensureOffscreenDocument();
+  if (offscreenReady) {
+    // Chromium: route through offscreen document
+    const progressListener = (msg) => {
+      if (msg.action === 'WRITE_PROGRESS' && msg.payload) {
+        const { key, args } = msg.payload;
+        sendStatus(popupPort, t(key, args));
       }
-      console.warn('Retry write also failed:', retryResult.error);
+    };
+    chrome.runtime.onMessage.addListener(progressListener);
+
+    try {
+      result = await chrome.runtime.sendMessage({
+        action: 'WRITE_ARTICLE',
+        payload: payload
+      });
+    } catch (e) {
+      // Offscreen document may have been garbage-collected — reset and recreate
+      console.warn('Offscreen communication failed, recreating:', e.message);
+      _offscreenReady = false;
+      const recreated = await ensureOffscreenDocument();
+      if (recreated) {
+        try {
+          result = await chrome.runtime.sendMessage({
+            action: 'WRITE_ARTICLE',
+            payload: payload
+          });
+        } catch (e2) {
+          result = { success: false, code: 'COMMUNICATION_ERROR', message: e2.message };
+        }
+      } else {
+        result = { success: false, code: 'COMMUNICATION_ERROR', message: e.message };
+      }
     }
+
+    chrome.runtime.onMessage.removeListener(progressListener);
+
+    if (result && result.success) {
+      sendDone(popupPort, safeDirName, result.imageCount || 0, result.imageErrors || 0);
+      notifyBadge('');
+      return;
+    }
+
+    console.warn('Offscreen write failed:', result?.code, result?.message);
+  } else {
+    // Non-Chromium: try direct write from service worker
+    // (Firefox background scripts are persistent, so folder handles survive)
+    const dirHandle = await loadDirectoryHandle();
+    if (dirHandle) {
+      const usable = await verifyHandleUsable(dirHandle);
+      if (usable) {
+        sendStatus(popupPort, t('swDownloading', [String(images.length)]));
+        const imageResults = await downloadAllImages(images, (done, total) => {
+          sendStatus(popupPort, t('swDownloadingProgress', [String(done), String(total)]));
+        });
+        const succeeded = imageResults.filter(r => r.data !== null);
+        const imageLookup = {};
+        succeeded.forEach(r => { imageLookup[r.originalUrl] = r.filename; });
+
+        let imagePrefix;
+        if (outputStructure === 'obsidian') {
+          imagePrefix = 'assets/' + safeTitle + '/';
+        } else {
+          imagePrefix = 'images/';
+        }
+        let finalMarkdown = markdown;
+        images.forEach(img => {
+          if (imageLookup[img.url]) {
+            finalMarkdown = finalMarkdown.replaceAll(img.url, imagePrefix + imageLookup[img.url]);
+          }
+        });
+
+        const finalMd = frontmatter + finalMarkdown;
+        sendStatus(popupPort, t('swWriting'));
+
+        try {
+          const writeResult = await attemptWrite(
+            dirHandle, safeDirName, safeTitle, finalMd, succeeded, outputStructure
+          );
+          if (writeResult.success) {
+            _dirHandle = dirHandle;
+            sendDone(popupPort, safeDirName, succeeded.length, imageResults.length - succeeded.length);
+            notifyBadge('');
+            return;
+          }
+          console.warn('Direct write failed:', writeResult.error);
+        } catch (e) {
+          console.warn('Direct write exception:', e);
+        }
+      }
+      _dirHandle = null;
+    }
+    result = { success: false, code: 'NO_FOLDER' };
   }
 
-  // Both attempts failed — fall back to zip, reusing already-downloaded image data
-  console.error('Direct write failed after retry, falling back to zip');
+  // 4. Both offscreen and direct write failed — fall back to zip
+  // Don't clear folderName/folderSet for PERMISSION_DENIED — the handle
+  // might just need a user gesture to re-authorize in the options page.
+  if (result?.code !== 'PERMISSION_DENIED') {
+    chrome.storage.local.remove(['folderName', 'folderSet']);
+  }
+
   sendStatus(popupPort, t('swDirectSaveFailed'));
   return handleZipFallback(tabId, popupPort, {
     title, author, publishDate, markdown, images, sourceUrl,
-    imageResults, outputStructure, safeTitle
+    outputStructure, safeTitle
   });
 }
 
-// Test whether a directory handle can actually be written to.
-// queryPermission alone is unreliable in service workers.
-async function verifyHandleUsable(dirHandle) {
-  try {
-    const testName = '.wms_test_' + Date.now().toString(36);
-    const testFile = await dirHandle.getFileHandle(testName, { create: true });
-    const writable = await testFile.createWritable();
-    await writable.write(new Uint8Array([1]));
-    await writable.close();
-    await dirHandle.removeEntry(testName);
-    return true;
-  } catch (e) {
-    console.warn('Handle verification failed:', e.message);
-    return false;
-  }
-}
-
-// Attempt to write article + images to the given directory handle.
-// Returns { success, error } — never throws.
-async function attemptWrite(dirHandle, safeDirName, safeTitle, mdContent, succeeded, outputStructure) {
-  try {
-    const articleDir = await dirHandle.getDirectoryHandle(safeDirName, { create: true });
-
-    let imagesDir;
-    if (outputStructure === 'obsidian') {
-      const assetsDir = await articleDir.getDirectoryHandle('assets', { create: true });
-      const titleDir = await assetsDir.getDirectoryHandle(safeTitle, { create: true });
-      imagesDir = titleDir;
-    } else {
-      imagesDir = await articleDir.getDirectoryHandle('images', { create: true });
-    }
-
-    const mdFileName = outputStructure === 'obsidian' ? safeTitle + '.md' : 'article.md';
-    const mdFile = await articleDir.getFileHandle(mdFileName, { create: true });
-    const mdWritable = await mdFile.createWritable();
-    await mdWritable.write(mdContent);
-    await mdWritable.close();
-
-    for (const r of succeeded) {
-      const imgFile = await imagesDir.getFileHandle(r.filename, { create: true });
-      const imgWritable = await imgFile.createWritable();
-      await imgWritable.write(r.data);
-      await imgWritable.close();
-    }
-
-    return { success: true, error: null };
-  } catch (e) {
-    return { success: false, error: e };
-  }
-}
-
-// --- Core: Copy to Clipboard ---
-
-async function handleCopyToClipboard(tabId) {
-  const article = await extractArticle(tabId);
-  if (!article) return;
-
-  const { title, author, publishDate, markdown, sourceUrl } = article;
-  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
-  const frontmatter = [
-    '---',
-    'title: "' + escapeYaml(title) + '"',
-    'author: "' + escapeYaml(author) + '"',
-    'date: "' + escapeYaml(publishDate) + '"',
-    'source: ' + sourceUrl,
-    'saved_at: ' + now,
-    '---', '', ''
-  ].join('\n');
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  await chrome.tabs.sendMessage(tab.id, { action: 'COPY_TO_CLIPBOARD', text: frontmatter + markdown });
-  notifyBadge('');
-}
-
-// --- Core: Save as PDF ---
+// ── Core: PDF ──────────────────────────────────────────────────────────
 
 async function generateAndSavePdf(tabId, popupPort) {
   sendStatus(popupPort, t('swExtracting'));
@@ -338,7 +387,6 @@ async function generateAndSavePdf(tabId, popupPort) {
 
   sendStatus(popupPort, 'Generating PDF...');
 
-  // Open a hidden tab with the print HTML
   const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(printHtml);
   let pdfTab;
   try {
@@ -348,7 +396,6 @@ async function generateAndSavePdf(tabId, popupPort) {
   }
 
   try {
-    // Wait for tab to load
     await new Promise((resolve, reject) => {
       const listener = (updatedTabId, changeInfo) => {
         if (updatedTabId === pdfTab.id && changeInfo.status === 'complete') {
@@ -363,13 +410,11 @@ async function generateAndSavePdf(tabId, popupPort) {
       }, 15000);
     });
 
-    // Allow rendering to settle
     await new Promise(r => setTimeout(r, 1500));
 
-    // Attach debugger and generate PDF
     const B = __WMS_BROWSER__;
     await B.debugger.attach(pdfTab.id);
-    const result = await B.debugger.sendCommand(
+    const pdfResult = await B.debugger.sendCommand(
       pdfTab.id,
       'Page.printToPDF',
       {
@@ -384,36 +429,23 @@ async function generateAndSavePdf(tabId, popupPort) {
       }
     );
 
-    const pdfBase64 = result.data;
+    const pdfBase64 = pdfResult.data;
     const safeTitle = sanitizeFilename(title) || 'wechat-article';
     const pdfFilename = safeTitle + '.pdf';
 
-    // Try to write to folder, fall back to download
-    const dirHandle = await loadDirectoryHandle();
+    // Try writing via offscreen document
+    const offscreenReady = await ensureOffscreenDocument();
     let savedToDir = false;
 
-    if (dirHandle) {
-      let permDenied = false;
+    if (offscreenReady) {
       try {
-        const perm = await dirHandle.queryPermission({ mode: 'readwrite' });
-        permDenied = (perm === 'denied');
-      } catch (permErr) {
-        // queryPermission threw — attempt write anyway
-        console.warn('PDF: queryPermission error, attempting write:', permErr);
-      }
-      if (!permDenied) {
-        try {
-          const pdfFile = await dirHandle.getFileHandle(pdfFilename, { create: true });
-          const writable = await pdfFile.createWritable();
-          const binaryStr = atob(pdfBase64);
-          const bytes = new Uint8Array(binaryStr.length);
-          for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-          await writable.write(bytes);
-          await writable.close();
-          savedToDir = true;
-        } catch (e) {
-          console.error('PDF folder write failed:', e);
-        }
+        const writeResult = await chrome.runtime.sendMessage({
+          action: 'WRITE_PDF',
+          payload: { filename: pdfFilename, data: pdfBase64 }
+        });
+        savedToDir = !!(writeResult && writeResult.success);
+      } catch (e) {
+        console.error('PDF offscreen write failed:', e);
       }
     }
 
@@ -471,28 +503,49 @@ function buildPrintHtml(title, author, publishDate, contentHtml, sourceUrl) {
     + contentHtml + '\n</body>\n</html>';
 }
 
-// --- Zip Fallback ---
-//
-// When `cachedArticle` carries `imageResults` (from a failed direct write),
-// those results are reused so we don't re-download every image.
+// ── Core: Copy to Clipboard ────────────────────────────────────────────
+
+async function handleCopyToClipboard(tabId) {
+  const article = await extractArticle(tabId);
+  if (!article) return;
+
+  const { title, author, publishDate, markdown, sourceUrl } = article;
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const frontmatter = [
+    '---',
+    'title: "' + escapeYaml(title) + '"',
+    'author: "' + escapeYaml(author) + '"',
+    'date: "' + escapeYaml(publishDate) + '"',
+    'source: ' + sourceUrl,
+    'saved_at: ' + now,
+    '---', '', ''
+  ].join('\n');
+
+  await chrome.tabs.sendMessage(tabId, { action: 'COPY_TO_CLIPBOARD', text: frontmatter + markdown });
+  notifyBadge('');
+}
+
+// ── Zip Fallback ───────────────────────────────────────────────────────
 
 async function handleZipFallback(tabId, popupPort, cachedArticle) {
   const article = cachedArticle || await extractArticle(tabId);
   if (!article) return;
 
   const { title, author, publishDate, markdown, images, sourceUrl } = article;
+  const imageResults = article.imageResults || null;
+  const outputStructure = article.outputStructure || await getOutputStructure();
+  const safeTitle = article.safeTitle || sanitizeFilename(title) || 'wechat-article';
 
-  // Reuse pre-downloaded image data when available
-  let imageResults = article.imageResults || null;
-  let outputStructure = article.outputStructure || await getOutputStructure();
-  let safeTitle = article.safeTitle || sanitizeFilename(title) || 'wechat-article';
-
-  if (!imageResults) {
+  // Reuse pre-downloaded images if available, otherwise download now
+  let succeeded;
+  if (imageResults) {
+    succeeded = imageResults.filter(r => r.data !== null);
+  } else {
     sendStatus(popupPort, t('swDownloading', [String(images.length)]));
-    imageResults = await downloadAllImages(images, () => {});
+    const results = await downloadAllImages(images, () => {});
+    succeeded = results.filter(r => r.data !== null);
   }
 
-  const succeeded = imageResults.filter(r => r.data !== null);
   const imageLookup = {};
   succeeded.forEach(r => { imageLookup[r.originalUrl] = r.filename; });
 
@@ -546,11 +599,11 @@ async function handleZipFallback(tabId, popupPort, cachedArticle) {
   const dataUrl = 'data:application/zip;base64,' + btoa(binary);
 
   await chrome.downloads.download({ url: dataUrl, filename: filename, saveAs: false });
-  sendDone(popupPort, filename, succeeded.length, imageResults.length - succeeded.length);
+  sendDone(popupPort, filename, succeeded.length, (article.imageResults || []).length - succeeded.length || 0);
   notifyBadge('');
 }
 
-// --- Article Extraction ---
+// ── Article Extraction ─────────────────────────────────────────────────
 
 async function extractArticle(tabId) {
   const result = await chrome.tabs.sendMessage(tabId, { action: 'EXTRACT' });
@@ -562,7 +615,7 @@ async function extractArticle(tabId) {
   return result.payload;
 }
 
-// --- Image Downloader ---
+// ── Image Downloader (for zip fallback) ────────────────────────────────
 
 async function downloadAllImages(images, onProgress) {
   const results = [];
@@ -589,7 +642,7 @@ async function downloadAllImages(images, onProgress) {
     }
   };
 
-  const concurrency = Math.min(3, images.length);
+  const concurrency = Math.min(3, images.length || 1);
   const workers = [];
   for (let i = 0; i < concurrency; i++) workers.push(worker());
   await Promise.all(workers);
@@ -602,28 +655,38 @@ function fetchWithTimeout(url, timeoutMs) {
   return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
-// --- Popup Status Helpers ---
+// ── Storage Helpers ────────────────────────────────────────────────────
+
+async function getOutputStructure() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['outputStructure'], (result) => {
+      resolve(result.outputStructure || 'simple');
+    });
+  });
+}
+
+// ── Popup Status Helpers ───────────────────────────────────────────────
 
 function sendStatus(port, msg) {
   if (!port) return;
-  try { port.postMessage({ status: msg }); } catch (e) { /* port disconnected */ }
+  try { port.postMessage({ status: msg }); } catch (e) {}
 }
 
 function sendDone(port, filename, imageCount, imageErrors) {
   if (!port) return;
   try {
     port.postMessage({ done: true, filename: filename, imageCount: imageCount, imageErrors: imageErrors });
-  } catch (e) { /* port disconnected */ }
+  } catch (e) {}
 }
 
 function sendDonePdf(port, pdfFilename) {
   if (!port) return;
   try {
     port.postMessage({ done: true, pdf: true, filename: pdfFilename });
-  } catch (e) { /* port disconnected */ }
+  } catch (e) {}
 }
 
-// --- Badge Feedback ---
+// ── Badge Feedback ─────────────────────────────────────────────────────
 
 function notifyBadge(text) {
   const B = __WMS_BROWSER__;
@@ -638,7 +701,7 @@ function notifyBadge(text) {
   }
 }
 
-// --- Utilities ---
+// ── Utilities ───────────────────────────────────────────────────────────
 
 function sanitizeFilename(name) {
   return name
