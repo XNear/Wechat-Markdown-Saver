@@ -8,6 +8,9 @@ const DB_NAME = 'wechat-md-saver';
 const DB_VERSION = 1;
 const STORE_NAME = 'handles';
 
+// In-memory handle cache — populated on first successful load from IndexedDB.
+let _dirHandle = null;
+
 // --- IndexedDB ---
 
 function openDB() {
@@ -20,13 +23,31 @@ function openDB() {
 }
 
 async function loadDirectoryHandle() {
-  const db = await openDB();
-  return new Promise((resolve) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get('dirHandle');
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => resolve(null);
-  });
+  if (_dirHandle) return _dirHandle;
+
+  // Read from IndexedDB (same origin as options page — should be shared).
+  // Retry a few times in case the page's transaction hasn't committed yet.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const db = await openDB();
+      const handle = await new Promise((resolve) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const req = tx.objectStore(STORE_NAME).get('dirHandle');
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+      if (handle) {
+        _dirHandle = handle;
+        return handle;
+      }
+    } catch (e) {
+      // ignore and retry
+    }
+    if (attempt < 2) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+  return null;
 }
 
 async function getOutputStructure() {
@@ -115,19 +136,25 @@ chrome.runtime.onConnect.addListener((port) => {
 // --- Core: Save to Folder ---
 
 async function handleSaveToFolder(tabId, popupPort) {
-  const dirHandle = await loadDirectoryHandle();
+  let dirHandle = await loadDirectoryHandle();
 
+  // --- Verify the handle is actually usable with a quick test write ---
   if (dirHandle) {
-    try {
-      const perm = await dirHandle.queryPermission({ mode: 'readwrite' });
-      if (perm === 'denied') {
-        // Only 'denied' is a hard stop. 'prompt' is expected in SW
-        // context — the handle may still work for writes.
-        throw new Error('Permission denied');
+    const usable = await verifyHandleUsable(dirHandle);
+    if (!usable) {
+      // Handle is stale — clear cache and try to reload once
+      console.warn('Cached directory handle is stale, attempting reload...');
+      _dirHandle = null;
+      dirHandle = await loadDirectoryHandle();
+      if (dirHandle) {
+        const retryUsable = await verifyHandleUsable(dirHandle);
+        if (!retryUsable) {
+          // Still stale after reload — inform user and fall back
+          console.warn('Directory handle still stale after reload');
+          _dirHandle = null;
+          dirHandle = null;
+        }
       }
-    } catch (e) {
-      sendStatus(popupPort, t('swFolderAccessLost'));
-      return handleZipFallback(tabId, popupPort);
     }
   }
 
@@ -152,9 +179,9 @@ async function handleSaveToFolder(tabId, popupPort) {
   succeeded.forEach(r => { imageLookup[r.originalUrl] = r.filename; });
 
   const outputStructure = await getOutputStructure();
+  const safeTitle = sanitizeFilename(title) || 'wechat-article';
   let imagePrefix;
   if (outputStructure === 'obsidian') {
-    const safeTitle = sanitizeFilename(title) || 'wechat-article';
     imagePrefix = 'assets/' + safeTitle + '/';
   } else {
     imagePrefix = 'images/';
@@ -181,9 +208,71 @@ async function handleSaveToFolder(tabId, popupPort) {
   const mdContent = frontmatter + finalMarkdown;
 
   sendStatus(popupPort, t('swWriting'));
+  const safeDirName = safeTitle + '_' + Date.now().toString(36);
+
+  // Attempt direct write. On failure, try clearing the handle cache and
+  // reloading once before falling back to zip.
+  const writeResult = await attemptWrite(
+    dirHandle, safeDirName, safeTitle, mdContent, succeeded, outputStructure
+  );
+
+  if (writeResult.success) {
+    sendDone(popupPort, safeDirName, succeeded.length, imageResults.length - succeeded.length);
+    notifyBadge('');
+    return;
+  }
+
+  // Write failed — try recovering the handle once
+  console.warn('First write attempt failed:', writeResult.error);
+  _dirHandle = null;
+  const reloadedHandle = await loadDirectoryHandle();
+  if (reloadedHandle) {
+    const reloadUsable = await verifyHandleUsable(reloadedHandle);
+    if (reloadUsable) {
+      sendStatus(popupPort, t('swWriting'));
+      const retryResult = await attemptWrite(
+        reloadedHandle, safeDirName, safeTitle, mdContent, succeeded, outputStructure
+      );
+      if (retryResult.success) {
+        _dirHandle = reloadedHandle;
+        sendDone(popupPort, safeDirName, succeeded.length, imageResults.length - succeeded.length);
+        notifyBadge('');
+        return;
+      }
+      console.warn('Retry write also failed:', retryResult.error);
+    }
+  }
+
+  // Both attempts failed — fall back to zip, reusing already-downloaded image data
+  console.error('Direct write failed after retry, falling back to zip');
+  sendStatus(popupPort, t('swDirectSaveFailed'));
+  return handleZipFallback(tabId, popupPort, {
+    title, author, publishDate, markdown, images, sourceUrl,
+    imageResults, outputStructure, safeTitle
+  });
+}
+
+// Test whether a directory handle can actually be written to.
+// queryPermission alone is unreliable in service workers.
+async function verifyHandleUsable(dirHandle) {
   try {
-    const safeTitle = sanitizeFilename(title) || 'wechat-article';
-    const safeDirName = safeTitle + '_' + Date.now().toString(36);
+    const testName = '.wms_test_' + Date.now().toString(36);
+    const testFile = await dirHandle.getFileHandle(testName, { create: true });
+    const writable = await testFile.createWritable();
+    await writable.write(new Uint8Array([1]));
+    await writable.close();
+    await dirHandle.removeEntry(testName);
+    return true;
+  } catch (e) {
+    console.warn('Handle verification failed:', e.message);
+    return false;
+  }
+}
+
+// Attempt to write article + images to the given directory handle.
+// Returns { success, error } — never throws.
+async function attemptWrite(dirHandle, safeDirName, safeTitle, mdContent, succeeded, outputStructure) {
+  try {
     const articleDir = await dirHandle.getDirectoryHandle(safeDirName, { create: true });
 
     let imagesDir;
@@ -208,12 +297,9 @@ async function handleSaveToFolder(tabId, popupPort) {
       await imgWritable.close();
     }
 
-    sendDone(popupPort, safeDirName, succeeded.length, imageResults.length - succeeded.length);
-    notifyBadge('');
-  } catch (writeErr) {
-    console.error('Write error:', writeErr);
-    sendStatus(popupPort, t('swDirectSaveFailed'));
-    return handleZipFallback(tabId, popupPort, { title, author, publishDate, markdown, images, sourceUrl });
+    return { success: true, error: null };
+  } catch (e) {
+    return { success: false, error: e };
   }
 }
 
@@ -307,22 +393,27 @@ async function generateAndSavePdf(tabId, popupPort) {
     let savedToDir = false;
 
     if (dirHandle) {
+      let permDenied = false;
       try {
         const perm = await dirHandle.queryPermission({ mode: 'readwrite' });
-        if (perm === 'denied') {
-          throw new Error('Permission denied');
+        permDenied = (perm === 'denied');
+      } catch (permErr) {
+        // queryPermission threw — attempt write anyway
+        console.warn('PDF: queryPermission error, attempting write:', permErr);
+      }
+      if (!permDenied) {
+        try {
+          const pdfFile = await dirHandle.getFileHandle(pdfFilename, { create: true });
+          const writable = await pdfFile.createWritable();
+          const binaryStr = atob(pdfBase64);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+          await writable.write(bytes);
+          await writable.close();
+          savedToDir = true;
+        } catch (e) {
+          console.error('PDF folder write failed:', e);
         }
-        // 'prompt' is OK in SW context — proceed, write will fail if truly denied
-        const pdfFile = await dirHandle.getFileHandle(pdfFilename, { create: true });
-        const writable = await pdfFile.createWritable();
-        const binaryStr = atob(pdfBase64);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-        await writable.write(bytes);
-        await writable.close();
-        savedToDir = true;
-      } catch (e) {
-        console.error('PDF folder write failed:', e);
       }
     }
 
@@ -331,9 +422,7 @@ async function generateAndSavePdf(tabId, popupPort) {
       await chrome.downloads.download({ url: pdfDataUrl, filename: pdfFilename, saveAs: false });
     }
 
-    if (popupPort) {
-      popupPort.postMessage({ done: true, pdf: true, filename: pdfFilename });
-    }
+    sendDonePdf(popupPort, pdfFilename);
     notifyBadge('');
   } catch (err) {
     console.error('PDF debugger failed:', err);
@@ -345,17 +434,11 @@ async function generateAndSavePdf(tabId, popupPort) {
 }
 
 async function fallbackPrintDialog(tabId, title, contentHtml, popupPort) {
-  if (popupPort) {
-    popupPort.postMessage({ status: t('popupPdfFailed') });
-  }
+  sendStatus(popupPort, t('popupPdfFailed'));
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'PRINT_PDF_FALLBACK', title: title, contentHtml: contentHtml });
   } catch (e) {
-    if (popupPort) {
-      popupPort.postMessage({ error: 'PDF generation failed' });
-    } else {
-      notifyBadge('!');
-    }
+    sendStatus(popupPort, 'PDF generation failed');
   }
 }
 
@@ -389,6 +472,9 @@ function buildPrintHtml(title, author, publishDate, contentHtml, sourceUrl) {
 }
 
 // --- Zip Fallback ---
+//
+// When `cachedArticle` carries `imageResults` (from a failed direct write),
+// those results are reused so we don't re-download every image.
 
 async function handleZipFallback(tabId, popupPort, cachedArticle) {
   const article = cachedArticle || await extractArticle(tabId);
@@ -396,17 +482,22 @@ async function handleZipFallback(tabId, popupPort, cachedArticle) {
 
   const { title, author, publishDate, markdown, images, sourceUrl } = article;
 
-  sendStatus(popupPort, t('swDownloading', [String(images.length)]));
-  const imageResults = await downloadAllImages(images, () => {});
+  // Reuse pre-downloaded image data when available
+  let imageResults = article.imageResults || null;
+  let outputStructure = article.outputStructure || await getOutputStructure();
+  let safeTitle = article.safeTitle || sanitizeFilename(title) || 'wechat-article';
+
+  if (!imageResults) {
+    sendStatus(popupPort, t('swDownloading', [String(images.length)]));
+    imageResults = await downloadAllImages(images, () => {});
+  }
 
   const succeeded = imageResults.filter(r => r.data !== null);
   const imageLookup = {};
   succeeded.forEach(r => { imageLookup[r.originalUrl] = r.filename; });
 
-  const outputStructure = await getOutputStructure();
   let imagePrefix;
   if (outputStructure === 'obsidian') {
-    const safeTitle = sanitizeFilename(title) || 'wechat-article';
     imagePrefix = 'assets/' + safeTitle + '/';
   } else {
     imagePrefix = 'images/';
@@ -437,7 +528,6 @@ async function handleZipFallback(tabId, popupPort, cachedArticle) {
   zip.file('article.md', mdContent);
 
   if (outputStructure === 'obsidian') {
-    const safeTitle = sanitizeFilename(title) || 'wechat-article';
     const assetsFolder = zip.folder('assets');
     const titleFolder = assetsFolder.folder(safeTitle);
     succeeded.forEach(r => { titleFolder.file(r.filename, r.data, { binary: true }); });
@@ -447,7 +537,6 @@ async function handleZipFallback(tabId, popupPort, cachedArticle) {
   }
 
   const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-  const safeTitle = sanitizeFilename(title) || 'wechat-article';
   const filename = safeTitle + '.zip';
 
   const buffer = await zipBlob.arrayBuffer();
@@ -496,7 +585,7 @@ async function downloadAllImages(images, onProgress) {
           }
         }
       }
-      onProgress(results.filter(r => r).length, images.length);
+      onProgress(results.filter(r => r !== undefined).length, images.length);
     }
   };
 
@@ -516,13 +605,22 @@ function fetchWithTimeout(url, timeoutMs) {
 // --- Popup Status Helpers ---
 
 function sendStatus(port, msg) {
-  if (port) port.postMessage({ status: msg });
+  if (!port) return;
+  try { port.postMessage({ status: msg }); } catch (e) { /* port disconnected */ }
 }
 
 function sendDone(port, filename, imageCount, imageErrors) {
-  if (port) {
+  if (!port) return;
+  try {
     port.postMessage({ done: true, filename: filename, imageCount: imageCount, imageErrors: imageErrors });
-  }
+  } catch (e) { /* port disconnected */ }
+}
+
+function sendDonePdf(port, pdfFilename) {
+  if (!port) return;
+  try {
+    port.postMessage({ done: true, pdf: true, filename: pdfFilename });
+  } catch (e) { /* port disconnected */ }
 }
 
 // --- Badge Feedback ---
