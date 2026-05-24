@@ -1,20 +1,20 @@
-# WeChat Markdown Saver / 微信 Markdown 保存助手
+# 微信 Markdown 保存助手
 
 一键将微信公众号文章保存为 Markdown 格式，图片自动下载到本地文件夹。支持 Chrome / Edge / Firefox。
-
-Save WeChat official account articles as Markdown with one click. Images are downloaded locally. Works on Chrome, Edge, and Firefox.
 
 <div align="center">
   <img width="654" height="491" alt="wechatmarkdown" src="https://github.com/user-attachments/assets/863efe7b-c06b-48a7-b7ad-03c81fac56e8" />
 </div>
 
-## 目标 Objective
+> English version: [README_EN.md](README_EN.md)
 
-让每个人都能把微信文章真正存进自己的知识库
+## 目标
+
+让每个人都能把微信文章真正存进自己的知识库。
 
 ---
 
-## 功能 Features
+## 功能
 
 - **一键保存** — 点击按钮或按快捷键，文章 + 图片直接写入本地文件夹，无需弹窗、无需解压
 - **直接写入文件夹** — 使用 File System Access API（Chrome / Edge），文章直接保存到你选择的目录
@@ -29,7 +29,7 @@ Save WeChat official account articles as Markdown with one click. Images are dow
 
 ---
 
-## 安装 Installation
+## 安装
 
 ### Chrome / Edge
 
@@ -51,7 +51,7 @@ Save WeChat official account articles as Markdown with one click. Images are dow
 
 ---
 
-## 使用 Usage
+## 使用
 
 ### 基本操作
 
@@ -73,9 +73,9 @@ Save WeChat official account articles as Markdown with one click. Images are dow
 
 ---
 
-## 输出结构 Output Structure
+## 输出结构
 
-### 简单模式 Simple
+### 简单模式
 
 ```
 你的文件夹/
@@ -102,7 +102,7 @@ Save WeChat official account articles as Markdown with one click. Images are dow
 
 ---
 
-## 设置 Settings
+## 设置
 
 右键扩展图标 →「选项」，或点击弹窗中的「设置」链接。
 
@@ -134,7 +134,7 @@ Save WeChat official account articles as Markdown with one click. Images are dow
 
 ---
 
-## 开发 Development
+## 开发
 
 ### 项目结构
 
@@ -144,7 +144,10 @@ wechat-markdown-saver/
 ├── manifest.edge.json         # Edge 清单
 ├── manifest.firefox.json      # Firefox 清单
 ├── background/
-│   └── service-worker.js      # 后台服务：文件夹写入、图片下载、PDF 生成
+│   └── service-worker.js      # 后台服务：消息路由、PDF 生成、zip 降级
+├── offscreen/
+│   ├── offscreen.html         # Offscreen document 页面
+│   └── offscreen.js           # 文件夹句柄持久化、图片下载、文件写入
 ├── content/
 │   ├── content-script.js      # 消息监听、PDF 降级打印
 │   ├── extractor.js           # DOM 提取 + HTML 清洗
@@ -174,7 +177,7 @@ wechat-markdown-saver/
 └── build.bat                  # Windows 批处理构建
 ```
 
-### 打包 Build
+### 打包
 
 ```bash
 # Windows PowerShell
@@ -196,15 +199,11 @@ bash build.sh
 - [Turndown.js](https://github.com/mixmark-io/turndown) — HTML 到 Markdown 转换
 - [JSZip](https://stuk.github.io/jszip/) — Zip 文件打包
 - File System Access API — 文件夹直写
+- Chrome Offscreen Documents API — 文件夹句柄持久化
 - Chrome Debugger API — 静默 PDF 生成
 - IndexedDB — 文件夹句柄持久化存储
 
 ---
-
-## Credits
-
-- [Turndown.js](https://github.com/mixmark-io/turndown) — HTML to Markdown converter
-- [JSZip](https://stuk.github.io/jszip/) — Create, read and edit .zip files
 
 ## License
 
